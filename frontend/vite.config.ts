@@ -2,8 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  root: 'web',
   plugins: [react()],
-  build: { outDir: '../dist', emptyOutDir: true },
+  // In dev, API calls go to the backend project (run it with `bun run dev` there).
   server: { proxy: { '/api': 'http://127.0.0.1:4848' } },
 });
