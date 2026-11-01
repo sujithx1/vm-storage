@@ -52,20 +52,37 @@ app.post('/api/connect', async (c) => {
   const conn = await connect(input);
   const id = crypto.randomUUID();
   const label = `${input.username}@${input.host}`;
-  sessions.set(id, { id, conn, label, lastUsed: Date.now(), mounts: [], scans: new Map() });
+  const { stdout } = await exec(conn, [
+    'uname -sr', 'hostname', 'id -u',
+    'if sudo -n true 2>/dev/null; then echo nopasswd; elif id -nG | grep -qwE "sudo|wheel|admin"; then echo password; else echo none; fi',
+  ].join('; '));
+  const [os, hostname, uid, sudoState] = stdout.trim().split('\n');
+  const isRoot = uid === '0';
+  sessions.set(id, { id, conn, label, isRoot, lastUsed: Date.now(), mounts: [], scans: new Map() });
   conn.on('close', () => {
     const s = sessions.get(id);
     s?.scans.forEach((scan) => scan.state === 'running' && scan.cancel?.());
     sessions.delete(id);
   });
-  const { stdout } = await exec(conn, 'uname -sr; hostname; sudo -n true 2>/dev/null && echo SUDO_OK || echo SUDO_NO');
-  const [os, hostname, sudoState] = stdout.trim().split('\n');
-  return c.json({ id, label, os, hostname, sudo: sudoState === 'SUDO_OK' });
+  // root: everything is readable already; nopasswd: sudo just works; password: ask for it in the UI.
+  return c.json({ id, label, os, hostname, sudoMode: isRoot ? 'root' : sudoState });
+});
+
+/** Check the sudo password once, then keep it in memory for this connection only. */
+app.post('/api/sudo', async (c) => {
+  const s = session(c);
+  const { password } = await c.req.json();
+  if (typeof password !== 'string' || !password || password.length > 1024) throw fail(400, 'Enter your sudo password');
+  // -k ignores any cached sudo session so the password is really checked.
+  const { code } = await exec(s.conn, `sudo -S -k -p '' true`, { stdin: password + '\n', timeoutMs: 20_000 });
+  if (code !== 0) throw fail(403, 'Wrong sudo password, or this user is not allowed to use sudo.');
+  s.sudoPassword = password;
+  return c.json({ ok: true });
 });
 
 app.get('/api/session', (c) => {
   const s = session(c);
-  return c.json({ id: s.id, label: s.label });
+  return c.json({ id: s.id, label: s.label, sudoUnlocked: !!s.sudoPassword });
 });
 
 app.post('/api/disconnect', (c) => {

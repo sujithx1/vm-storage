@@ -1,4 +1,4 @@
-import { exec, fail, SUDO_PASSWORD_RE, type Session } from './ssh';
+import { checkSudo, fail, run, type Session } from './ssh';
 
 /**
  * Every cleanup is a fixed command defined here. The browser only sends target ids,
@@ -175,8 +175,8 @@ function parseDetect(out: string) {
 export async function detect(s: Session, sudo: boolean) {
   const usable = TARGETS.filter((t) => sudo || !t.root);
   const script = PRELUDE + usable.map((t) => `echo "@@${t.id}"; ( ${t.detect} ) 2>/dev/null`).join('\n');
-  const { stdout, stderr } = await exec(s.conn, script, { sudo });
-  if (SUDO_PASSWORD_RE.test(stderr)) throw fail(403, 'sudo needs a password on this VM. Turn off "Use sudo".');
+  const { stdout, stderr } = await run(s, script, { sudo });
+  checkSudo(stderr);
 
   const sections = new Map<string, string>();
   for (const part of stdout.split('@@').slice(1)) {
@@ -206,7 +206,8 @@ export async function clean(s: Session, ids: string[], sudo: boolean, force: boo
   const results = [];
   for (const t of chosen) {
     // Same sudo setting as detect, so what gets cleaned matches the size that was shown.
-    const { code, stdout, stderr } = await exec(s.conn, PRELUDE + t.clean, { sudo, timeoutMs: 20 * 60_000 });
+    const { code, stdout, stderr } = await run(s, PRELUDE + t.clean, { sudo, timeoutMs: 20 * 60_000 });
+    checkSudo(stderr);
     const output = (stdout + stderr).trim().split('\n').slice(-12).join('\n');
     results.push({ id: t.id, label: t.label, ok: code === 0, output });
   }

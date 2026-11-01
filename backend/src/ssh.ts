@@ -15,6 +15,9 @@ export type Session = {
   id: string;
   conn: Client;
   label: string;
+  isRoot: boolean;
+  /** Only held in memory for this connection, only ever written to sudo's stdin. */
+  sudoPassword?: string;
   lastUsed: number;
   mounts: string[];
   scans: Map<string, Scan>;
@@ -41,10 +44,9 @@ export function cleanPath(p: unknown): string {
 
 export type ExecResult = { code: number; stdout: string; stderr: string };
 
-export function exec(conn: Client, cmd: string, { sudo = false, stdin, timeoutMs = 10 * 60_000 }: { sudo?: boolean; stdin?: string; timeoutMs?: number } = {}) {
-  const full = sudo ? `sudo -n sh -c ${q(cmd)}` : cmd;
+export function exec(conn: Client, cmd: string, { stdin, timeoutMs = 10 * 60_000 }: { stdin?: string; timeoutMs?: number } = {}) {
   return new Promise<ExecResult>((resolve, reject) => {
-    conn.exec(full, (err, stream) => {
+    conn.exec(cmd, (err, stream) => {
       if (err) return reject(err);
       let stdout = '', stderr = '';
       const timer = setTimeout(() => {
@@ -62,12 +64,33 @@ export function exec(conn: Client, cmd: string, { sudo = false, stdin, timeoutMs
   });
 }
 
+/**
+ * Run as root when asked. With a sudo password, it goes to sudo's stdin (`-S`) ahead of any
+ * other input, so it never shows up in the remote process list or shell history.
+ */
+export function wrapSudo(s: Session, cmd: string, sudo: boolean) {
+  if (!sudo || s.isRoot) return { cmd, stdinPrefix: '' };
+  if (s.sudoPassword) return { cmd: `sudo -S -p '' sh -c ${q(cmd)}`, stdinPrefix: s.sudoPassword + '\n' };
+  return { cmd: `sudo -n sh -c ${q(cmd)}`, stdinPrefix: '' };
+}
+
+export function run(s: Session, cmd: string, { sudo = false, stdin, timeoutMs }: { sudo?: boolean; stdin?: string; timeoutMs?: number } = {}) {
+  const w = wrapSudo(s, cmd, sudo);
+  const input = w.stdinPrefix || stdin !== undefined ? w.stdinPrefix + (stdin ?? '') : undefined;
+  return exec(s.conn, w.cmd, { stdin: input, timeoutMs });
+}
+
 export const SUDO_PASSWORD_RE = /sudo: a (terminal|password) is required/;
+export const SUDO_WRONG_RE = /Sorry, try again|incorrect password attempt/;
+
+export function sudoProblem(stderr: string): string | undefined {
+  if (SUDO_PASSWORD_RE.test(stderr)) return 'sudo needs your password on this VM. Click “Use sudo” to enter it.';
+  if (SUDO_WRONG_RE.test(stderr)) return 'The sudo password was rejected. Click “Use sudo” to enter it again.';
+}
 
 export function checkSudo(stderr: string) {
-  if (SUDO_PASSWORD_RE.test(stderr)) {
-    throw fail(403, 'sudo needs a password on this VM. Turn off "Use sudo" or allow passwordless sudo for this user.');
-  }
+  const problem = sudoProblem(stderr);
+  if (problem) throw fail(403, problem);
 }
 
 export function getSession(id: string | undefined): Session {

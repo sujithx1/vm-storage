@@ -1,4 +1,4 @@
-import { fail, q, exec, checkSudo, type Session } from './ssh';
+import { fail, q, run, checkSudo, type Session } from './ssh';
 import { findIndex, indexedDirs, forgetBytes } from './scan';
 
 const MAX_EDIT_BYTES = 2 * 1024 * 1024;
@@ -13,7 +13,7 @@ const PROTECTED = new Set([
 ]);
 
 export async function disks(s: Session) {
-  const { stdout } = await exec(s.conn, 'df -kP 2>/dev/null');
+  const { stdout } = await run(s, 'df -kP 2>/dev/null');
   const list = stdout.trim().split('\n').slice(1).map((line) => {
     const parts = line.trim().split(/\s+/);
     const [fs, total, used, avail] = parts;
@@ -32,7 +32,7 @@ export async function contents(s: Session, dir: string, sudo: boolean) {
   const cmd = index
     ? `cd ${q(dir)} || exit 3; ${files}`
     : `cd ${q(dir)} || exit 3; du -xk -d 1 . 2>&1; echo ${SEP}; ${files}`;
-  const { code, stdout, stderr } = await exec(s.conn, cmd, { sudo });
+  const { code, stdout, stderr } = await run(s, cmd, { sudo });
   checkSudo(stderr);
   if (code === 3) throw fail(404, `Cannot open ${dir}: ${stderr.trim() || 'no such folder or permission denied'}`);
 
@@ -87,7 +87,7 @@ export async function contents(s: Session, dir: string, sudo: boolean) {
 
 export async function largest(s: Session, dir: string, minMb: number, sudo: boolean) {
   const cmd = `find ${q(dir)} -xdev -type f -size +${minMb}M -printf '%k\\t%T@\\t%p\\0' 2>/dev/null`;
-  const { stdout, stderr } = await exec(s.conn, cmd, { sudo });
+  const { stdout, stderr } = await run(s, cmd, { sudo });
   checkSudo(stderr);
   return stdout.split('\0').filter(Boolean).map((rec) => {
     const [kb, mtime, ...p] = rec.split('\t');
@@ -96,7 +96,7 @@ export async function largest(s: Session, dir: string, minMb: number, sudo: bool
 }
 
 export async function readText(s: Session, file: string, sudo: boolean) {
-  const { code, stdout, stderr } = await exec(s.conn, `[ -f ${q(file)} ] || exit 3; head -c ${MAX_EDIT_BYTES + 1} ${q(file)}`, { sudo });
+  const { code, stdout, stderr } = await run(s, `[ -f ${q(file)} ] || exit 3; head -c ${MAX_EDIT_BYTES + 1} ${q(file)}`, { sudo });
   checkSudo(stderr);
   if (code === 3) throw fail(400, 'Not a regular file');
   if (code !== 0) throw fail(400, stderr.trim() || 'Cannot read file');
@@ -106,7 +106,7 @@ export async function readText(s: Session, file: string, sudo: boolean) {
 }
 
 export async function writeText(s: Session, file: string, content: string, sudo: boolean) {
-  const { code, stderr } = await exec(s.conn, `cat > ${q(file)}`, { sudo, stdin: content });
+  const { code, stderr } = await run(s, `cat > ${q(file)}`, { sudo, stdin: content });
   checkSudo(stderr);
   if (code !== 0) throw fail(400, stderr.trim() || 'Write failed');
 }
@@ -114,7 +114,7 @@ export async function writeText(s: Session, file: string, content: string, sudo:
 export async function remove(s: Session, target: string, sudo: boolean) {
   if (PROTECTED.has(target)) throw fail(400, `Refusing to delete protected system path ${target}`);
   if (s.mounts.includes(target)) throw fail(400, `${target} is a mounted disk. Delete what is inside it instead.`);
-  const { code, stdout, stderr } = await exec(s.conn, `du -sk -- ${q(target)} 2>/dev/null | cut -f1; rm -rf -- ${q(target)}`, { sudo });
+  const { code, stdout, stderr } = await run(s, `du -sk -- ${q(target)} 2>/dev/null | cut -f1; rm -rf -- ${q(target)}`, { sudo });
   checkSudo(stderr);
   if (code !== 0) throw fail(400, stderr.trim() || 'Delete failed');
   const freed = (Number(stdout.trim()) || 0) * 1024;
@@ -124,7 +124,7 @@ export async function remove(s: Session, target: string, sudo: boolean) {
 
 // Empty a file in place: the right way to free space from a log a running process still writes to.
 export async function truncate(s: Session, target: string, sudo: boolean) {
-  const { code, stdout, stderr } = await exec(s.conn, `[ -f ${q(target)} ] || exit 3; du -k -- ${q(target)} | cut -f1; : > ${q(target)}`, { sudo });
+  const { code, stdout, stderr } = await run(s, `[ -f ${q(target)} ] || exit 3; du -k -- ${q(target)} | cut -f1; : > ${q(target)}`, { sudo });
   checkSudo(stderr);
   if (code === 3) throw fail(400, 'Not a regular file');
   if (code !== 0) throw fail(400, stderr.trim() || 'Truncate failed');
