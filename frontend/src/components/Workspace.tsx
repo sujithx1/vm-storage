@@ -1,15 +1,20 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { FolderTree as TreeIcon, LogOut, Sparkles } from 'lucide-react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { FolderTree as TreeIcon, LockKeyhole, LogOut, ShieldCheck, Sparkles } from 'lucide-react';
 import { api } from '../api';
 import type { Disk, ScanStatus, SessionInfo } from '../types';
-import { useToast } from '../ui';
+import { Modal, Spinner, useToast } from '../ui';
 import { DiskBar } from './DiskBar';
 import { Explorer } from './Explorer';
 import { Cleanup } from './Cleanup';
 
 type Ws = {
   info: SessionInfo;
+  /** Commands run as root (sudo on, or connected as root). */
   sudo: boolean;
+  /** This user can become root at all (possibly after entering the sudo password). */
+  sudoAvailable: boolean;
+  /** Turn sudo on, asking for the password first if the VM needs one. */
+  requestSudo: () => void;
   disks: Disk[];
   scans: Map<string, ScanStatus>;
   /** Bumped whenever sizes change, so trees and panels refetch. */
@@ -24,7 +29,10 @@ export const useWs = () => useContext(WsCtx);
 
 export function Workspace({ info, onDisconnect }: { info: SessionInfo; onDisconnect: () => void }) {
   const toast = useToast();
-  const [sudo, setSudo] = useState(info.sudo);
+  const isRoot = info.sudoMode === 'root';
+  const [sudo, setSudo] = useState(isRoot || info.sudoMode === 'nopasswd');
+  const [unlocked, setUnlocked] = useState(info.sudoMode !== 'password');
+  const [askPassword, setAskPassword] = useState(false);
   const [disks, setDisks] = useState<Disk[]>([]);
   const [scans, setScans] = useState<Map<string, ScanStatus>>(new Map());
   const [version, setVersion] = useState(0);
@@ -44,6 +52,18 @@ export function Workspace({ info, onDisconnect }: { info: SessionInfo; onDisconn
 
   useEffect(() => { loadDisks(); loadScans().catch(() => {}); }, [loadDisks, loadScans]);
 
+  // After a page reload the server may still hold the sudo password for this connection.
+  useEffect(() => {
+    if (info.sudoMode !== 'password') return;
+    api.session().then((r) => { if (r.sudoUnlocked) { setUnlocked(true); setSudo(true); } }).catch(() => {});
+  }, [info.sudoMode]);
+
+  const setSudoOn = useCallback((on: boolean) => {
+    if (on && !unlocked) { setAskPassword(true); return; }
+    setSudo(on);
+    setVersion((v) => v + 1);
+  }, [unlocked]);
+
   // Poll while any scan is running; refresh views when one finishes.
   const running = [...scans.values()].some((s) => s.state === 'running');
   useEffect(() => {
@@ -59,8 +79,10 @@ export function Workspace({ info, onDisconnect }: { info: SessionInfo; onDisconn
     return () => clearInterval(t);
   }, [running, loadScans, toast]);
 
+  const sudoAvailable = info.sudoMode !== 'none';
   const ws = useMemo<Ws>(() => ({
-    info, sudo, disks, scans, version,
+    info, sudo, sudoAvailable, disks, scans, version,
+    requestSudo: () => setSudoOn(true),
     refresh: () => { setVersion((v) => v + 1); loadDisks(); loadScans().catch(() => {}); },
     startScan: async (root) => {
       try {
@@ -69,7 +91,7 @@ export function Workspace({ info, onDisconnect }: { info: SessionInfo; onDisconn
       } catch (e) { toast((e as Error).message, true); }
     },
     cancelScan: async (root) => { await api.cancelScan(root).catch(() => {}); await loadScans().catch(() => {}); },
-  }), [info, sudo, disks, scans, version, loadDisks, loadScans, toast]);
+  }), [info, sudo, sudoAvailable, setSudoOn, disks, scans, version, loadDisks, loadScans, toast]);
 
   return (
     <WsCtx.Provider value={ws}>
@@ -84,12 +106,17 @@ export function Workspace({ info, onDisconnect }: { info: SessionInfo; onDisconn
             <button className={tab === 'cleanup' ? 'active' : ''} onClick={() => setTab('cleanup')}><Sparkles size={14} /> Cleanup</button>
           </nav>
           <div className="spacer" />
-          <label className="toggle" title={info.sudo
-            ? 'Run commands with sudo so you can see and clean files owned by root'
-            : 'This user has no passwordless sudo, so only files it can read are shown'}>
-            <input type="checkbox" checked={sudo} disabled={!info.sudo} onChange={(e) => { setSudo(e.target.checked); setVersion((v) => v + 1); }} />
-            Use sudo
-          </label>
+          {isRoot ? (
+            <span className="badge" title="Connected as root, so every file is visible"><ShieldCheck size={12} /> root</span>
+          ) : (
+            <label className="toggle" title={sudoAvailable
+              ? 'Run commands as root so files owned by root (Docker data, logs) are measured and can be cleaned'
+              : 'This user cannot use sudo, so only files it can read are shown'}>
+              <input type="checkbox" checked={sudo} disabled={!sudoAvailable} onChange={(e) => setSudoOn(e.target.checked)} />
+              Use sudo
+              {info.sudoMode === 'password' && !unlocked && <LockKeyhole size={13} className="muted" />}
+            </label>
+          )}
           <button onClick={onDisconnect}><LogOut size={14} /> Disconnect</button>
         </header>
         <DiskBar selected={mount} onSelect={(m) => { setMount(m); setTab('explore'); }} />
@@ -97,6 +124,53 @@ export function Workspace({ info, onDisconnect }: { info: SessionInfo; onDisconn
           {tab === 'explore' ? <Explorer key={mount} root={mount} /> : <Cleanup />}
         </main>
       </div>
+      {askPassword && (
+        <SudoDialog
+          user={info.label.split('@')[0]}
+          onClose={() => setAskPassword(false)}
+          onUnlocked={() => {
+            setAskPassword(false);
+            setUnlocked(true);
+            setSudo(true);
+            setVersion((v) => v + 1);
+            toast('sudo is on. Rescan to include files only root can read.');
+          }}
+        />
+      )}
     </WsCtx.Provider>
+  );
+}
+
+function SudoDialog({ user, onClose, onUnlocked }: { user: string; onClose: () => void; onUnlocked: () => void }) {
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      await api.unlockSudo(password);
+      setPassword('');
+      onUnlocked();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title={<><LockKeyhole size={18} /> sudo password</>} onClose={onClose}>
+      <form onSubmit={submit}>
+        <p>Files owned by root, such as Docker data and container volumes, are only visible with sudo.
+          Enter the sudo password for <b>{user}</b> on this VM.</p>
+        <input type="password" autoFocus autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <p className="muted small">Kept only in this app's memory for this connection and sent to the VM over SSH. Never saved to disk.</p>
+        {error && <div className="error-box">{error}</div>}
+        <div className="modal-foot flush">
+          <button type="button" onClick={onClose}>Cancel</button>
+          <button className="primary" disabled={!password || busy}>{busy ? <><Spinner /> Checking…</> : 'Use sudo'}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }

@@ -7,7 +7,7 @@ import { Confirm, Modal, Spinner } from '../ui';
 import { useWs } from './Workspace';
 
 export function Cleanup() {
-  const { sudo, info, refresh } = useWs();
+  const { sudo, sudoAvailable, requestSudo, refresh } = useWs();
   const [targets, setTargets] = useState<CleanupTarget[] | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -58,7 +58,9 @@ export function Cleanup() {
           <p className="muted">Finds caches, old logs and leftovers that are safe to remove. Nothing is deleted until you confirm.</p>
           {!sudo && (
             <p className="warn-text small">
-              {info.sudo ? 'Turn on “Use sudo” to include system-wide items (logs, apt, Docker).' : 'This user has no passwordless sudo, so only its own files can be cleaned.'}
+              {sudoAvailable
+                ? <>System-wide items (logs, apt, Docker) need root. <button className="link" onClick={requestSudo}>Use sudo</button> to include them.</>
+                : 'This user cannot use sudo, so only its own files can be cleaned.'}
             </p>
           )}
         </div>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ChevronRight, Folder, FolderOpen, HardDrive } from 'lucide-react';
+import { ChevronRight, Folder, FolderOpen, HardDrive, LockKeyhole } from 'lucide-react';
 import { api } from '../api';
 import type { TreeNode } from '../types';
 import { fmtBytes } from '../format';
@@ -107,6 +107,9 @@ export function FolderTree({ root, selected, onSelect }: { root: string; selecte
               </button>
               <Icon size={15} className="folder-icon" />
               <span className="tree-name">{depth === 0 ? node.path : node.name}</span>
+              {node.incomplete && (
+                <span title="Some folders inside could not be read, so the real size is larger"><LockKeyhole size={12} className="lock-mark" /></span>
+              )}
               <span className="tree-size">
                 <span className="mini-bar"><span style={{ width: `${Math.min(100, pct)}%` }} /></span>
                 <span className="num">{fmtBytes(node.size)}</span>

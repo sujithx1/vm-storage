@@ -1,4 +1,6 @@
-export type SessionInfo = { id: string; label: string; os: string; hostname: string; sudo: boolean };
+export type SudoMode = 'root' | 'nopasswd' | 'password' | 'none';
+
+export type SessionInfo = { id: string; label: string; os: string; hostname: string; sudoMode: SudoMode };
 
 export type SshHost = { alias: string; host: string; user?: string; port?: number; keyPath?: string };
 
@@ -7,6 +9,7 @@ export type Disk = { fs: string; total: number; used: number; avail: number; mou
 export type ScanStatus = {
   root: string;
   state: 'running' | 'done' | 'error' | 'cancelled';
+  sudo: boolean;
   dirs: number;
   current: string;
   denied: number;
@@ -17,7 +20,7 @@ export type ScanStatus = {
   total: number;
 };
 
-export type TreeNode = { name: string; path: string; size: number; mount: boolean; hasChildren: boolean };
+export type TreeNode = { name: string; path: string; size: number; mount: boolean; incomplete?: boolean; hasChildren: boolean };
 
 export type FileEntry = { name: string; path: string; size: number; type: 'file' | 'link' | 'other'; mtime: number };
 
@@ -26,6 +29,7 @@ export type Contents = {
   size: number;
   indexed: boolean;
   stale: boolean;
+  incomplete: boolean;
   denied: number;
   dirs: TreeNode[];
   files: FileEntry[];

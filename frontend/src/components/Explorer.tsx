@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Radar, Square } from 'lucide-react';
+import { LockKeyhole, Radar, Square } from 'lucide-react';
 import { fmtAgo, fmtBytes, fmtNum } from '../format';
 import { Spinner } from '../ui';
 import { useWs } from './Workspace';
@@ -7,7 +7,7 @@ import { FolderTree } from './FolderTree';
 import { FolderPanel } from './FolderPanel';
 
 export function Explorer({ root }: { root: string }) {
-  const { scans, startScan, cancelScan } = useWs();
+  const { scans, startScan, cancelScan, sudo, sudoAvailable, requestSudo } = useWs();
   const [selected, setSelected] = useState(root);
   const scan = scans.get(root);
 
@@ -24,6 +24,18 @@ export function Explorer({ root }: { root: string }) {
             </span>
           )}
         </div>
+        {scan?.state === 'done' && !scan.sudo && (scan.denied > 0 || sudoAvailable) && (
+          <div className="scan-banner">
+            <LockKeyhole size={15} />
+            <span>
+              Scanned without sudo{scan.denied > 0 ? `: ${scan.denied.toLocaleString()} folders could not be read and count as 0` : ''}.
+              Files only root can read (like Docker data) are missing.
+            </span>
+            {sudoAvailable && (sudo
+              ? <button className="primary" onClick={() => startScan(root)}>Rescan with sudo</button>
+              : <button className="primary" onClick={requestSudo}>Use sudo</button>)}
+          </div>
+        )}
         {scan?.state === 'done' ? (
           <FolderTree root={root} selected={selected} onSelect={setSelected} />
         ) : scan?.state === 'running' ? (
@@ -47,8 +59,8 @@ export function Explorer({ root }: { root: string }) {
             <button className="primary" onClick={() => startScan(root)}>Scan {root}</button>
           </div>
         )}
-        {scan?.state === 'done' && scan.denied > 0 && (
-          <div className="pane-foot warn-text small">{fmtNum(scan.denied)} folders could not be read{' '}(turn on “Use sudo” and rescan)</div>
+        {scan?.state === 'done' && scan.sudo && scan.denied > 0 && (
+          <div className="pane-foot warn-text small">{fmtNum(scan.denied)} folders could not be read even with sudo (marked with a lock)</div>
         )}
         {scan?.state === 'done' && <div className="pane-foot muted small">{fmtNum(scan.dirs)} folders · {fmtBytes(scan.total)} used</div>}
       </section>

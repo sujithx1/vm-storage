@@ -35,7 +35,8 @@ const qs = (params: Record<string, string | number | boolean>) =>
 
 export const api = {
   sshHosts: () => call<{ hosts: SshHost[] }>('GET', '/api/ssh-hosts'),
-  session: () => call<{ id: string; label: string }>('GET', '/api/session'),
+  session: () => call<{ id: string; label: string; sudoUnlocked: boolean }>('GET', '/api/session'),
+  unlockSudo: (password: string) => call('POST', '/api/sudo', { password }),
   connect: (body: Record<string, unknown>) => call<SessionInfo>('POST', '/api/connect', body),
   disconnect: () => call('POST', '/api/disconnect'),
   disks: () => call<{ disks: Disk[] }>('GET', '/api/disks'),

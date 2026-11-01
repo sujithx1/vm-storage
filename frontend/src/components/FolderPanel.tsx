@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowUp, Eraser, File, FileCode2, Folder, HardDrive, Link2, Pencil, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ArrowUp, Eraser, File, FileCode2, Folder, HardDrive, Link2, LockKeyhole, Pencil, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import type { Contents, LargeFile } from '../types';
 import { fmtBytes, fmtDate, fmtNum, parentOf } from '../format';
@@ -8,7 +8,7 @@ import { Confirm, Spinner, useToast } from '../ui';
 import { useWs } from './Workspace';
 import { Editor } from './Editor';
 
-type Item = { kind: 'dir' | 'file' | 'link' | 'other'; name: string; path: string; size: number; mtime?: number; mount?: boolean };
+type Item = { kind: 'dir' | 'file' | 'link' | 'other'; name: string; path: string; size: number; mtime?: number; mount?: boolean; incomplete?: boolean };
 type Dialog =
   | { kind: 'delete'; path: string; size: number; dir: boolean }
   | { kind: 'truncate'; path: string; size: number }
@@ -71,7 +71,7 @@ function ContentsList({ path, onOpen, setDialog }: { path: string; onOpen: (p: s
 
   const items = useMemo<Item[]>(() => {
     if (!data) return [];
-    const dirs: Item[] = data.dirs.map((d) => ({ kind: 'dir', name: d.name, path: d.path, size: d.size, mount: d.mount }));
+    const dirs: Item[] = data.dirs.map((d) => ({ kind: 'dir', name: d.name, path: d.path, size: d.size, mount: d.mount, incomplete: d.incomplete }));
     const files: Item[] = data.files.map((f) => ({ kind: f.type, name: f.name, path: f.path, size: f.size, mtime: f.mtime }));
     return [...dirs, ...files].sort((a, b) => b.size - a.size);
   }, [data]);
@@ -91,6 +91,7 @@ function ContentsList({ path, onOpen, setDialog }: { path: string; onOpen: (p: s
           {!data.indexed && <span className="badge" title="Measured live because this disk has not been scanned">live</span>}
           {data.stale && <span className="badge warn" title="Cleanup ran since the scan; rescan for exact sizes">may be outdated</span>}
           {data.denied > 0 && <span className="badge warn">{data.denied} unreadable</span>}
+          {data.incomplete && data.indexed && <span className="badge warn" title="Some folders inside could not be read"><LockKeyhole size={11} /> size incomplete</span>}
         </div>
         <button className="icon-btn" onClick={() => setReload((r) => r + 1)} title="Reload">{loading ? <Spinner /> : <RefreshCw size={14} />}</button>
       </div>
@@ -106,6 +107,7 @@ function ContentsList({ path, onOpen, setDialog }: { path: string; onOpen: (p: s
                   <button className="row-main" onClick={() => it.kind === 'dir' ? onOpen(it.path) : it.kind === 'file' && setDialog({ kind: 'edit', path: it.path })} title={it.path}>
                     <Icon size={16} className={it.kind === 'dir' ? 'folder-icon' : 'file-icon'} />
                     <span className="row-name">{it.name}{it.mount && <span className="badge">disk</span>}</span>
+                    {it.incomplete && <span title="Some folders inside could not be read, so the real size is larger"><LockKeyhole size={13} className="lock-mark" /></span>}
                     {it.mtime ? <span className="row-date muted small">{fmtDate(it.mtime)}</span> : <span className="row-date" />}
                   </button>
                   <span className="row-bar"><span style={{ width: `${Math.min(100, pct)}%` }} /></span>
