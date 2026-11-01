@@ -36,7 +36,7 @@ export async function contents(s: Session, dir: string, sudo: boolean) {
   checkSudo(stderr);
   if (code === 3) throw fail(404, `Cannot open ${dir}: ${stderr.trim() || 'no such folder or permission denied'}`);
 
-  let dirs: { name: string; path: string; size: number; mount: boolean; hasChildren: boolean }[];
+  let dirs: { name: string; path: string; size: number; mount: boolean; incomplete: boolean; hasChildren: boolean }[];
   let size: number;
   let denied = 0;
   let filesOut = stdout;
@@ -55,7 +55,7 @@ export async function contents(s: Session, dir: string, sudo: boolean) {
       const name = line.slice(tab + 1).replace(/^\.\//, '');
       if (name === '.') { size = bytes; continue; }
       const p = dir === '/' ? `/${name}` : `${dir}/${name}`;
-      dirs.push({ name, path: p, size: bytes, mount: s.mounts.includes(p), hasChildren: true });
+      dirs.push({ name, path: p, size: bytes, mount: s.mounts.includes(p), incomplete: false, hasChildren: true });
     }
     dirs.sort((a, b) => b.size - a.size);
   }
@@ -77,6 +77,7 @@ export async function contents(s: Session, dir: string, sudo: boolean) {
     size,
     indexed: !!index,
     stale: index?.stale ?? false,
+    incomplete: index ? index.incomplete.has(dir) : denied > 0,
     denied: index ? 0 : denied,
     dirs,
     files: fileList.slice(0, MAX_FILES),

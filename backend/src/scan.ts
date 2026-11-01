@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { q, SUDO_PASSWORD_RE, type Session } from './ssh';
+import { q, sudoProblem, wrapSudo, type Session } from './ssh';
 
 /**
  * One `du` pass over a filesystem, kept in memory. Browsing folders afterwards reads
@@ -8,9 +8,14 @@ import { q, SUDO_PASSWORD_RE, type Session } from './ssh';
 export type Scan = {
   root: string;
   state: 'running' | 'done' | 'error' | 'cancelled';
+  /** Whether it ran as root. Without root, folders only root can read count as 0. */
+  sudo: boolean;
   dirs: number;
   current: string;
   denied: number;
+  deniedDirs: string[];
+  /** Folders whose size is too small because something inside could not be read. */
+  incomplete: Set<string>;
   startedAt: number;
   finishedAt?: number;
   error?: string;
@@ -21,8 +26,8 @@ export type Scan = {
 };
 
 export function scanSummary(s: Scan) {
-  const { root, state, dirs, current, denied, startedAt, finishedAt, error, stale } = s;
-  return { root, state, dirs, current, denied, startedAt, finishedAt, error, stale, total: s.sizes.get(root) ?? 0 };
+  const { root, state, sudo, dirs, current, denied, startedAt, finishedAt, error, stale } = s;
+  return { root, state, sudo, dirs, current, denied, startedAt, finishedAt, error, stale, total: s.sizes.get(root) ?? 0 };
 }
 
 export function startScan(session: Session, root: string, sudo: boolean): Scan {
@@ -30,13 +35,13 @@ export function startScan(session: Session, root: string, sudo: boolean): Scan {
   if (existing?.state === 'running') return existing;
 
   const scan: Scan = {
-    root, state: 'running', dirs: 0, current: root, denied: 0, startedAt: Date.now(), stale: false,
-    sizes: new Map(), children: new Map(),
+    root, state: 'running', sudo: sudo || session.isRoot, dirs: 0, current: root, denied: 0, deniedDirs: [],
+    incomplete: new Set(), startedAt: Date.now(), stale: false, sizes: new Map(), children: new Map(),
   };
   session.scans.set(root, scan);
 
-  const cmd = `du -xk -- ${q(root)}`;
-  session.conn.exec(sudo ? `sudo -n sh -c ${q(cmd)}` : cmd, (err, stream) => {
+  const { cmd, stdinPrefix } = wrapSudo(session, `du -xk -- ${q(root)}`, sudo);
+  session.conn.exec(cmd, (err, stream) => {
     if (err) {
       Object.assign(scan, { state: 'error', error: err.message, finishedAt: Date.now() });
       return;
@@ -63,17 +68,31 @@ export function startScan(session: Session, root: string, sudo: boolean): Scan {
       lines.forEach(handle);
     });
     let stderr = '';
+    let errBuf = '';
+    // e.g. "du: cannot read directory '/home/dev/docker-containers/db': Permission denied"
+    const handleErr = (line: string) => {
+      if (/denied/i.test(line)) {
+        scan.denied++;
+        const m = line.match(/'(.+)'/);
+        if (m && scan.deniedDirs.length < 100_000) scan.deniedDirs.push(m[1]);
+      }
+      if (stderr.length < 4000) stderr += line + '\n';
+    };
     stream.stderr.on('data', (d: Buffer) => {
-      const text = d.toString();
-      scan.denied += text.match(/denied/gi)?.length ?? 0;
-      if (stderr.length < 4000) stderr += text;
+      errBuf += d.toString();
+      const lines = errBuf.split('\n');
+      errBuf = lines.pop()!;
+      lines.forEach(handleErr);
     });
+    if (stdinPrefix) stream.end(stdinPrefix);
     stream.on('close', () => {
       handle(buf);
+      handleErr(errBuf);
       scan.finishedAt = Date.now();
       if (scan.state === 'cancelled') return;
-      if (SUDO_PASSWORD_RE.test(stderr)) {
-        Object.assign(scan, { state: 'error', error: 'sudo needs a password on this VM. Turn off "Use sudo".' });
+      const problem = sudoProblem(stderr);
+      if (problem) {
+        Object.assign(scan, { state: 'error', error: problem });
         return;
       }
       if (!scan.sizes.has(root)) {
@@ -88,6 +107,14 @@ export function startScan(session: Session, root: string, sudo: boolean): Scan {
 }
 
 function buildChildren(scan: Scan) {
+  for (const denied of scan.deniedDirs) {
+    let cur = denied;
+    while (within(scan.root, cur) && !scan.incomplete.has(cur)) {
+      scan.incomplete.add(cur);
+      if (cur === scan.root) break;
+      cur = path.posix.dirname(cur);
+    }
+  }
   for (const p of scan.sizes.keys()) {
     if (p === scan.root) continue;
     const parent = path.posix.dirname(p);
@@ -120,6 +147,7 @@ export function indexedDirs(session: Session, scan: Scan, dir: string) {
       path: p,
       size,
       mount: mounted,
+      incomplete: scan.incomplete.has(p),
       hasChildren: mounted ? true : (scan.children.get(p)?.length ?? 0) > 0,
     };
   });
