@@ -11,7 +11,8 @@ import * as cleanup from './cleanup';
 
 const PORT = Number(process.env.PORT) || 4848;
 const DEV = !!process.env.VMSM_DEV;
-const DIST = path.join(import.meta.dir, '..', 'dist');
+// The UI is a separate project; serve its production build if it has been built.
+const DIST = process.env.FRONTEND_DIST ?? path.join(import.meta.dir, '..', '..', 'frontend', 'dist');
 
 const token = await loadToken();
 const allowedHosts = [`localhost:${PORT}`, `127.0.0.1:${PORT}`];
@@ -148,7 +149,7 @@ app.post('/api/cleanup', async (c) => {
 /* ---------- UI ---------- */
 
 app.use('/*', serveStatic({ root: path.relative(process.cwd(), DIST) || '.' }));
-app.get('/', (c) => c.text('UI not built yet. Run "bun run build" first.', 503));
+app.get('/', (c) => c.text('UI not built yet. Run "bun run build" in the frontend folder first.', 503));
 
 try {
   Bun.serve({
