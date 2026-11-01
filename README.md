@@ -1,18 +1,50 @@
 # VM Storage Manager
 
-A local web app (Bun + Hono backend, React + Vite UI) that connects to your VMs over SSH, shows where disk space goes, and cleans it up.
+A local web app (Bun + Hono backend, React + Vite frontend) that connects to your VMs over SSH, shows where disk space goes, and cleans it up.
+
+## Project layout
+
+Two independent projects, each with its own `package.json`:
+
+```
+backend/    Bun + Hono API server (SSH, scanning, cleanup, security)
+frontend/   React + Vite UI
+```
 
 ## Run
 
+Build the UI once (and again after UI changes):
+
 ```bash
+cd frontend
+bun install
+bun run build
+```
+
+Start the server:
+
+```bash
+cd backend
 bun install
 bun start
 ```
 
-`bun start` builds the UI, starts the server on http://localhost:4848 and opens a one-time sign-in link in your browser.
-The link is also printed in the terminal. Open it in any browser you want to use the app from. Use `PORT=xxxx bun start` to change the port.
+The backend serves the UI from `frontend/dist` on http://localhost:4848 and opens a one-time sign-in link in your browser.
+The link is also printed in the terminal. Use `PORT=xxxx bun start` to change the port, or `FRONTEND_DIST=/path/to/dist` to serve a build from elsewhere.
 
-Development with hot reload (two terminals): `bun run dev:server` and `bun run dev:web`, then open the printed sign-in link once and use http://localhost:5173.
+## Development
+
+Run each project in its own terminal:
+
+```bash
+cd backend && bun run dev      # API with auto-restart on :4848
+```
+
+```bash
+cd frontend && bun run dev     # Vite with hot reload on :5173, proxies /api to the backend
+```
+
+Open the sign-in link the backend prints once, then use http://localhost:5173.
 
 ## Features
 
