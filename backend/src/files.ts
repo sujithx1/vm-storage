@@ -1,4 +1,5 @@
-import { fail, q, run, checkSudo, type Session } from './ssh';
+import path from 'node:path';
+import { fail, q, run, checkSudo, execStream, type Session } from './ssh';
 import { findIndex, indexedDirs, forgetBytes } from './scan';
 
 const MAX_EDIT_BYTES = 2 * 1024 * 1024;
@@ -121,6 +122,33 @@ export async function remove(s: Session, target: string, sudo: boolean) {
   const freed = (Number(stdout.trim()) || 0) * 1024;
   forgetBytes(s, target, freed, true);
   return freed;
+}
+
+/**
+ * What a download of `target` will be. Always runs as the SSH user (no sudo), so only
+ * files that user can read are offered. A folder link is resolved to the real folder.
+ */
+export async function downloadInfo(s: Session, target: string) {
+  const p = q(target);
+  const { code, stdout } = await run(s,
+    `if [ -d ${p} ]; then cd -P -- ${p} 2>/dev/null && [ -r . ] || exit 4; echo dir; pwd -P; ` +
+    `elif [ -f ${p} ]; then [ -r ${p} ] || exit 4; stat -L -c %s -- ${p}; else exit 3; fi`);
+  if (code === 3) throw fail(404, `${target} is not a file or folder`);
+  if (code === 4) throw fail(403, `This user cannot read ${target}. Only files readable without sudo can be downloaded.`);
+  if (code !== 0) throw fail(400, `Cannot read ${target}`);
+  const [first, real] = stdout.trim().split('\n');
+  if (first !== 'dir') return { kind: 'file' as const, path: target, size: Number(first), filename: path.posix.basename(target) };
+  if (real === '/') throw fail(400, 'Pick a folder to download, not the whole disk');
+  return { kind: 'dir' as const, path: real, size: null, filename: `${path.posix.basename(real)}.tar.gz` };
+}
+
+/** A file as-is, or a folder packed with tar + gzip on the VM, streamed without buffering. */
+export async function download(s: Session, target: string) {
+  const info = await downloadInfo(s, target);
+  const cmd = info.kind === 'file'
+    ? `cat -- ${q(info.path)}`
+    : `cd -- ${q(path.posix.dirname(info.path))} && exec tar -czf - ${q('./' + path.posix.basename(info.path))} 2>/dev/null`;
+  return { ...info, body: await execStream(s, cmd) };
 }
 
 // Empty a file in place: the right way to free space from a log a running process still writes to.

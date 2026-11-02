@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowUp, Eraser, File, FileCode2, Folder, HardDrive, Link2, LockKeyhole, Pencil, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ArrowUp, Download, Eraser, File, FileCode2, Folder, HardDrive, Link2, LockKeyhole, Pencil, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import type { Contents, LargeFile } from '../types';
 import { fmtBytes, fmtDate, fmtNum, parentOf } from '../format';
@@ -50,8 +50,26 @@ export function FolderPanel({ path, root, onOpen }: { path: string; root: string
   );
 }
 
+/** Check first (so errors show as a toast), then hand the browser a plain link so big folders stream straight to disk. */
+function useDownload() {
+  const toast = useToast();
+  return async (path: string) => {
+    try {
+      const info = await api.downloadInfo(path);
+      const a = document.createElement('a');
+      a.href = api.downloadUrl(path);
+      a.download = '';
+      a.click();
+      toast(info.kind === 'dir'
+        ? `Downloading ${info.filename}. The folder is compressed on the VM as it downloads.`
+        : `Downloading ${info.filename} (${fmtBytes(info.size ?? 0)})`);
+    } catch (e) { toast((e as Error).message, true); }
+  };
+}
+
 function ContentsList({ path, onOpen, setDialog }: { path: string; onOpen: (p: string) => void; setDialog: (d: Dialog) => void }) {
   const { sudo, version } = useWs();
+  const download = useDownload();
   const [data, setData] = useState<Contents | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -114,6 +132,9 @@ function ContentsList({ path, onOpen, setDialog }: { path: string; onOpen: (p: s
                   <span className="row-size num">{fmtBytes(it.size)}</span>
                   <span className="row-pct muted small num">{pct >= 0.1 ? pct.toFixed(1) : '<0.1'}%</span>
                   <span className="row-actions">
+                    {(it.kind === 'file' || (it.kind === 'dir' && !it.mount)) && (
+                      <button className="icon-btn" title={it.kind === 'dir' ? 'Download folder (.tar.gz)' : 'Download'} onClick={() => download(it.path)}><Download size={14} /></button>
+                    )}
                     {it.kind === 'file' && <>
                       <button className="icon-btn" title="Edit" onClick={() => setDialog({ kind: 'edit', path: it.path })}><Pencil size={14} /></button>
                       <button className="icon-btn" title="Empty file (keep it, clear contents)" onClick={() => setDialog({ kind: 'truncate', path: it.path, size: it.size })}><Eraser size={14} /></button>
@@ -135,6 +156,7 @@ function ContentsList({ path, onOpen, setDialog }: { path: string; onOpen: (p: s
 
 function LargestFiles({ path, onOpen, setDialog }: { path: string; onOpen: (p: string) => void; setDialog: (d: Dialog) => void }) {
   const { sudo, version } = useWs();
+  const download = useDownload();
   const [minMb, setMinMb] = useState(100);
   const [files, setFiles] = useState<LargeFile[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -178,7 +200,8 @@ function LargestFiles({ path, onOpen, setDialog }: { path: string; onOpen: (p: s
                 </button>
                 <span className="row-size num">{fmtBytes(f.size)}</span>
                 <span className="row-actions">
-                  <button className="icon-btn" title="Empty file" onClick={() => setDialog({ kind: 'truncate', path: f.path, size: f.size })}><Eraser size={14} /></button>
+                  <button className="icon-btn" title="Download" onClick={() => download(f.path)}><Download size={14} /></button>
+                  <button className="icon-btn" title="Empty file"onClick={() => setDialog({ kind: 'truncate', path: f.path, size: f.size })}><Eraser size={14} /></button>
                   <button className="icon-btn danger-icon" title="Delete" onClick={() => setDialog({ kind: 'delete', path: f.path, size: f.size, dir: false })}><Trash2 size={14} /></button>
                 </span>
               </div>

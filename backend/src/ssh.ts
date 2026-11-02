@@ -64,6 +64,29 @@ export function exec(conn: Client, cmd: string, { stdin, timeoutMs = 10 * 60_000
   });
 }
 
+/** Stream a command's stdout (downloads) instead of buffering it; cancelling closes the SSH channel. */
+export function execStream(s: Session, cmd: string) {
+  return new Promise<ReadableStream<Uint8Array>>((resolve, reject) => {
+    s.conn.exec(cmd, (err, ch) => {
+      if (err) return reject(err);
+      ch.stderr.resume();
+      resolve(new ReadableStream<Uint8Array>({
+        start(ctl) {
+          ch.on('data', (d: Buffer) => {
+            // A long download counts as use, so the idle timer doesn't cut it off.
+            s.lastUsed = Date.now();
+            ctl.enqueue(new Uint8Array(d));
+            if ((ctl.desiredSize ?? 1) <= 0) ch.pause();
+          });
+          ch.on('close', () => { try { ctl.close(); } catch { /* already cancelled */ } });
+        },
+        pull() { ch.resume(); },
+        cancel() { ch.close(); },
+      }, new CountQueuingStrategy({ highWaterMark: 16 })));
+    });
+  });
+}
+
 /**
  * Run as root when asked. With a sudo password, it goes to sudo's stdin (`-S`) ahead of any
  * other input, so it never shows up in the remote process list or shell history.

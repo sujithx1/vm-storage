@@ -140,6 +140,23 @@ app.put('/api/file', async (c) => {
   return c.json({ ok: true });
 });
 
+app.get('/api/download-info', async (c) => {
+  const { kind, size, filename } = await files.downloadInfo(session(c), cleanPath(c.req.query('path')));
+  return c.json({ kind, size, filename });
+});
+
+// Opened as a plain link so the browser streams it to disk; links can't send headers, so the session id is in the query.
+app.get('/api/download', async (c) => {
+  const d = await files.download(getSession(c.req.query('session')), cleanPath(c.req.query('path')));
+  const ascii = d.filename.replace(/[^\x20-\x7e]|["\\]/g, '_');
+  return c.body(d.body, 200, {
+    'content-type': d.kind === 'dir' ? 'application/gzip' : 'application/octet-stream',
+    'content-disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(d.filename)}`,
+    'cache-control': 'no-store',
+    ...(d.size !== null && { 'content-length': String(d.size) }),
+  });
+});
+
 app.post('/api/delete', async (c) => {
   const s = session(c);
   const { path: p, sudo } = await c.req.json();

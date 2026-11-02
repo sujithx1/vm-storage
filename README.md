@@ -53,7 +53,8 @@ Open the sign-in link the backend prints once, then use http://localhost:5173.
 - **Contents panel**: folders and files of the selected folder, biggest first, with % of the folder. Large folders are virtualized, so 100k-file folders stay smooth.
 - **Largest files**: the biggest files under any folder.
 - **Root-owned files**: Docker data, container volumes and many logs are only readable by root. Turn on **Use sudo** (it asks for the sudo password if the VM needs one) and rescan. Folders the scan could not fully read show a lock icon, so a too-small size is never shown silently.
-- **Actions**: Delete, Empty (clear a live log in place), Edit (text files up to 2 MB, ⌘S saves).
+- **Actions**: Delete, Empty (clear a live log in place), Edit (text files up to 2 MB, ⌘S saves), Download.
+- **Download**: saves a file, or a whole folder (like a project) as `name.tar.gz`, to your computer's Downloads folder. Folders are compressed on the VM and streamed, so large ones never sit in memory. Downloads run as the SSH user without sudo, so only files that user can read are offered; anything inside a folder it cannot read is left out of the archive.
 - **Cleanup**:
   - *Safe*: apt downloads, journal logs older than 7 days, old rotated logs, pip/npm/yarn/bun/go caches, stale temp files, crash dumps, old snap revisions, Docker build cache.
   - *Force*: shrink the journal to 50 MB, all rotated logs, empty live logs over 100 MB, all temp files, entire ~/.cache, `docker system prune -a`, unused Docker volumes, `apt autoremove`. Each shows a warning, and running them requires typing `FORCE`.

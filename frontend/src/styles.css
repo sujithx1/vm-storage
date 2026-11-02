@@ -245,7 +245,7 @@ p { margin: 8px 0; }
 .row-bar > span { display: block; height: 100%; background: var(--bar-fill); }
 .row-size { width: 72px; text-align: right; flex: none; }
 .row-pct { width: 46px; text-align: right; flex: none; }
-.row-actions { display: flex; gap: 2px; width: 92px; justify-content: flex-end; flex: none; opacity: 0.35; }
+.row-actions { display: flex; gap: 2px; width: 104px; justify-content: flex-end; flex: none; opacity: 0.35; }
 .list-row:hover .row-actions { opacity: 1; }
 @media (max-width: 1200px) { .row-date { display: none; } }
 
